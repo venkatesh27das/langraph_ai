@@ -1,0 +1,14 @@
+langgraph==0.2.16
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-core==0.2.38
+openai==1.51.0
+python-dotenv==1.0.0
+pydantic==2.9.2
+typing-extensions==4.12.2
+requests==2.32.3
+pathlib==1.0.1
+ast==3.11.0
+json5==0.9.25
+autopep8==2.0.4
+black==24.8.0
