@@ -50,8 +50,8 @@ graph TD
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/ai-code-generator.git
-   cd ai-code-generator
+   git clone https://github.com/venkatesh27das/langraph_ai.git
+   cd langraph_ai/ai_code_generator
    ```
 
 2. **Install dependencies**
@@ -321,4 +321,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Made with ❤️ by AI Engineers, for AI Engineers**
+**Made with ❤️ by Venky (with help of Claude), for AI Engineers**
