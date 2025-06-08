@@ -237,12 +237,56 @@ ocr_temp/
 image_cache/
 processed_images/
 
+# Document files (may contain sensitive medical data)
+*.pdf
+*.doc
+*.docx
+*.rtf
+*.txt
+*.odt
+
+# Image files (prescription images, medical documents)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.tif
+*.svg
+*.webp
+*.ico
+*.psd
+*.ai
+*.eps
+
 # Excel/CSV output files (may contain sensitive data)
 *.xlsx
 *.xls
 *.csv
 output_*.xlsx
 processed_*.csv
+
+# Audio/Video files (if any medical recordings)
+*.mp3
+*.wav
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.m4a
+*.aac
+
+# Archive files
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.bz2
+*.xz
 
 # Checkpoint and model files
 checkpoints/
