@@ -42,6 +42,21 @@ class Config:
     # Debug Settings
     DEBUG_CLARIFICATION = True  # Show clarification decision reasons
     LOG_RETRIEVAL_SCORES = False  # Log document similarity scores
+
+     # Thinking Model Configuration
+    USE_THINKING_MODEL = True  # Set to False to disable thinking model features
+    THINKING_MODEL_PROMPT_ADDITION = "Think through this step by step, then provide your final answer."
+    
+    # Thinking Model Debug Settings
+    SAVE_RAW_RESPONSES = False  # Set to True to save raw responses with thinking content for debugging
+    DEBUG_THINKING_CONTENT = False  # Set to True to print thinking content to console for debugging
+    
+    # Advanced Thinking Model Settings
+    THINKING_MODEL_TEMPERATURE = 0.7  # Temperature for thinking model reasoning
+    THINKING_MODEL_MAX_TOKENS = 3000   # Higher token limit for thinking models
+    
+    # Fallback behavior when thinking content removal fails
+    FALLBACK_ON_THINKING_FAILURE = True  # Return cleaned response even if thinking removal partially fails
     
     # Paths
     DOCUMENTS_PATH = os.getenv("DOCUMENTS_PATH", "./data/documents")

@@ -26,7 +26,7 @@ class AgentState(TypedDict):
     analysis_results: Optional[Dict[str, Any]]
 
 class AgentGraph:
-    """LangGraph-based agentic workflow for RAG system"""
+    """LangGraph-based agentic workflow for RAG system with thinking model support"""
     
     def __init__(self, llm_client: LMStudioClient, vector_store: VectorStore, 
                  conversation_handler: ConversationHandler):
@@ -39,6 +39,11 @@ class AgentGraph:
         self.MIN_DOCS_FOR_RESPONSE = 1  # Minimum docs needed to avoid clarification
         self.MIN_SIMILARITY_SCORE = 0.3  # Minimum similarity score (lower distance = higher similarity)
         self.MIN_QUERY_WORDS = 2  # Minimum words in query without context
+        
+        # Thinking model configuration
+        self.USE_THINKING_MODEL = getattr(Config, 'USE_THINKING_MODEL', True)
+        self.THINKING_MODEL_PROMPT_ADDITION = getattr(Config, 'THINKING_MODEL_PROMPT_ADDITION', 
+            "Think through this step by step, then provide your final answer.")
     
     def _build_graph(self) -> CompiledStateGraph:
         """Build the LangGraph workflow"""
@@ -72,6 +77,21 @@ class AgentGraph:
         
         return workflow.compile()
     
+    def _enhance_prompt_for_thinking_model(self, base_prompt: str, task_type: str = "general") -> str:
+        """Enhance prompts for thinking models"""
+        if not self.USE_THINKING_MODEL:
+            return base_prompt
+        
+        thinking_instructions = {
+            "analysis": "Think through the query analysis step by step, considering context and intent.",
+            "clarification": "Think about what specific information is missing and how to ask for it clearly.",
+            "response": "Think through the available information and structure your response logically."
+        }
+        
+        instruction = thinking_instructions.get(task_type, self.THINKING_MODEL_PROMPT_ADDITION)
+        
+        return f"{instruction}\n\n{base_prompt}\n\nProvide your reasoning in <think> tags, then give your final answer."
+    
     def _analyze_query(self, state: AgentState) -> Dict[str, Any]:
         """Analyze the user query for intent and context"""
         query = state["user_query"]
@@ -80,11 +100,15 @@ class AgentGraph:
         # Enhanced query analysis using structured prompts
         analysis_prompt = SystemPrompts.get_query_analysis_prompt(query, context)
         
+        # Enhance for thinking model
+        if self.USE_THINKING_MODEL:
+            analysis_prompt = self._enhance_prompt_for_thinking_model(analysis_prompt, "analysis")
+        
         try:
             analysis_response = self.llm_client.chat_completion([
                 {"role": "system", "content": SystemPrompts.BASE_SYSTEM_PROMPT},
                 {"role": "user", "content": analysis_prompt}
-            ])
+            ], strip_thinking=True)  # Always strip thinking content
             
             # Parse analysis response
             query_analysis = self._parse_query_analysis(analysis_response)
@@ -203,10 +227,7 @@ class AgentGraph:
                 needs_clarification = True
                 print("🔍 Clarification needed: Poor quality search results")
         
-        # CONDITION 4: Only ask LLM for clarification decision in edge cases
-        # Remove the automatic LLM call that was causing unnecessary clarifications
-        
-        # CONDITION 5: Special case - if user explicitly asks for clarification
+        # CONDITION 4: Special case - if user explicitly asks for clarification
         clarification_requests = ["can you clarify", "what do you mean", "i don't understand", 
                                 "be more specific", "explain better"]
         if any(phrase in query.lower() for phrase in clarification_requests):
@@ -255,9 +276,21 @@ class AgentGraph:
                         query, context, clarification_type, retrieved_docs
                     )
             else:
-                clarification = ClarificationTemplates.generate_clarification(
+                clarification_prompt = ClarificationTemplates.generate_clarification(
                     query, context, clarification_type, retrieved_docs
                 )
+                
+                # For complex clarifications, use thinking model
+                if self.USE_THINKING_MODEL and clarification_type in ["multiple_topics", "ambiguous_context"]:
+                    enhanced_prompt = self._enhance_prompt_for_thinking_model(
+                        clarification_prompt, "clarification"
+                    )
+                    clarification = self.llm_client.chat_completion([
+                        {"role": "system", "content": SystemPrompts.BASE_SYSTEM_PROMPT},
+                        {"role": "user", "content": enhanced_prompt}
+                    ], strip_thinking=True)
+                else:
+                    clarification = clarification_prompt
             
             # Validate clarification quality
             quality_check = ClarificationTemplates.validate_clarification_quality(clarification, query)
@@ -296,11 +329,15 @@ class AgentGraph:
             query, context, retrieved_docs
         )
         
+        # Enhance for thinking model
+        if self.USE_THINKING_MODEL:
+            rag_prompt = self._enhance_prompt_for_thinking_model(rag_prompt, "response")
+        
         try:
             response = self.llm_client.chat_completion([
                 {"role": "system", "content": SystemPrompts.BASE_SYSTEM_PROMPT},
                 {"role": "user", "content": rag_prompt}
-            ])
+            ], strip_thinking=True)  # Always strip thinking content for final response
             
             # Enhance response with source citations
             response = self._add_source_citations(response, retrieved_docs)
@@ -387,8 +424,9 @@ class AgentGraph:
     
     def get_graph_visualization(self) -> str:
         """Get a text representation of the graph structure"""
-        return """
-        Agent Graph Structure:
+        thinking_status = "ENABLED" if self.USE_THINKING_MODEL else "DISABLED"
+        return f"""
+        Agent Graph Structure (Thinking Model: {thinking_status}):
         
         query_analysis → document_retrieval → clarification_check
                                                      ↓
@@ -404,4 +442,9 @@ class AgentGraph:
         - clarification_check: Uses stricter conditions to determine clarification needs
         - generate_clarification: Creates clarification using templates and validation
         - generate_response: Generates final RAG response with source citations
+        
+        Thinking Model Features:
+        - Automatic thinking content removal from responses
+        - Enhanced prompts for complex reasoning tasks
+        - Configurable thinking model behavior
         """
