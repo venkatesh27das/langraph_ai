@@ -6,6 +6,15 @@ from chromadb.config import Settings
 from config import Config
 from .llm_client import LMStudioClient
 
+# PDF processing imports
+try:
+    import PyPDF2
+    import fitz  # PyMuPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+    print("Warning: PDF processing libraries not available. Install PyPDF2 and PyMuPDF for PDF support.")
+
 class VectorStore:
     """ChromaDB vector store for document storage and retrieval"""
     
@@ -131,6 +140,48 @@ class VectorStore:
             print(f"Error clearing collection: {e}")
             return False
     
+    def _extract_text_from_pdf_pypdf2(self, file_path: str) -> str:
+        """Extract text from PDF using PyPDF2"""
+        try:
+            text = ""
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+            return text.strip()
+        except Exception as e:
+            print(f"PyPDF2 extraction failed for {file_path}: {e}")
+            return ""
+    
+    def _extract_text_from_pdf_pymupdf(self, file_path: str) -> str:
+        """Extract text from PDF using PyMuPDF (more robust)"""
+        try:
+            doc = fitz.open(file_path)
+            text = ""
+            for page in doc:
+                text += page.get_text() + "\n"
+            doc.close()
+            return text.strip()
+        except Exception as e:
+            print(f"PyMuPDF extraction failed for {file_path}: {e}")
+            return ""
+    
+    def _extract_text_from_pdf(self, file_path: str) -> str:
+        """Extract text from PDF using available libraries"""
+        if not PDF_AVAILABLE:
+            print(f"PDF libraries not available. Cannot process {file_path}")
+            return ""
+        
+        # Try PyMuPDF first (more robust), then fallback to PyPDF2
+        text = self._extract_text_from_pdf_pymupdf(file_path)
+        if not text:
+            text = self._extract_text_from_pdf_pypdf2(file_path)
+        
+        if not text:
+            print(f"Failed to extract text from PDF: {file_path}")
+        
+        return text
+    
     def load_documents_from_directory(self, directory_path: str) -> bool:
         """Load and index documents from a directory"""
         if not os.path.exists(directory_path):
@@ -140,8 +191,8 @@ class VectorStore:
         documents = []
         metadatas = []
         
-        # Supported file extensions
-        supported_extensions = {'.txt', '.md', '.py', '.js', '.json', '.csv'}
+        # Supported file extensions (now including PDF)
+        supported_extensions = {'.txt', '.md', '.py', '.js', '.json', '.csv', '.pdf'}
         
         try:
             for filename in os.listdir(directory_path):
@@ -151,30 +202,51 @@ class VectorStore:
                     file_ext = os.path.splitext(filename)[1].lower()
                     
                     if file_ext in supported_extensions:
+                        print(f"Processing file: {filename}")
+                        
                         try:
-                            with open(file_path, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                                
+                            # Handle PDF files differently
+                            if file_ext == '.pdf':
+                                if not PDF_AVAILABLE:
+                                    print(f"Skipping PDF {filename} - PDF libraries not available")
+                                    continue
+                                content = self._extract_text_from_pdf(file_path)
+                            else:
+                                # Handle text-based files
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    content = f.read()
+                            
+                            if not content.strip():
+                                print(f"No content extracted from {filename}")
+                                continue
+                            
                             # Split large documents into chunks
                             chunks = self._split_text(content, Config.CHUNK_SIZE, Config.CHUNK_OVERLAP)
                             
                             for i, chunk in enumerate(chunks):
-                                documents.append(chunk)
-                                metadatas.append({
-                                    "source": filename,
-                                    "file_path": file_path,
-                                    "chunk_index": i,
-                                    "file_type": file_ext
-                                })
+                                if chunk.strip():  # Only add non-empty chunks
+                                    documents.append(chunk)
+                                    metadatas.append({
+                                        "source": filename,
+                                        "file_path": file_path,
+                                        "chunk_index": i,
+                                        "file_type": file_ext,
+                                        "total_chunks": len(chunks)
+                                    })
+                            
+                            print(f"✅ Processed {filename}: {len(chunks)} chunks")
                                 
                         except Exception as e:
-                            print(f"Error reading file {filename}: {e}")
+                            print(f"❌ Error reading file {filename}: {e}")
                             continue
+                    else:
+                        print(f"Skipping unsupported file: {filename}")
             
             if documents:
+                print(f"\n📚 Total chunks to index: {len(documents)}")
                 return self.add_documents(documents, metadatas)
             else:
-                print("No supported documents found in directory")
+                print("❌ No supported documents found in directory")
                 return False
                 
         except Exception as e:
@@ -182,7 +254,7 @@ class VectorStore:
             return False
     
     def _split_text(self, text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
-        """Split text into overlapping chunks"""
+        """Split text into overlapping chunks with improved logic"""
         if len(text) <= chunk_size:
             return [text]
         
@@ -194,19 +266,64 @@ class VectorStore:
             
             # Try to break at sentence boundary
             if end < len(text):
-                # Look for sentence endings
-                for i in range(end, max(start, end - 100), -1):
+                # Look for sentence endings within a reasonable range
+                best_break = end
+                for i in range(end, max(start + chunk_size // 2, end - 200), -1):
                     if text[i] in '.!?':
-                        end = i + 1
+                        # Check if it's likely end of sentence (followed by space or newline)
+                        if i + 1 < len(text) and text[i + 1] in ' \n\t':
+                            best_break = i + 1
+                            break
+                    elif text[i] in '\n':
+                        # Break at paragraph boundary
+                        best_break = i + 1
                         break
+                end = best_break
             
             chunk = text[start:end].strip()
             if chunk:
                 chunks.append(chunk)
             
-            start = end - chunk_overlap
-            
-            if start >= len(text):
+            # Move start position with overlap
+            if end >= len(text):
                 break
+            start = max(start + 1, end - chunk_overlap)
         
         return chunks
+    
+    def get_document_statistics(self) -> Dict[str, Any]:
+        """Get statistics about indexed documents"""
+        try:
+            results = self.collection.get(
+                include=["metadatas"]
+            )
+            
+            if not results["metadatas"]:
+                return {"total_chunks": 0, "files": {}, "file_types": {}}
+            
+            file_stats = {}
+            type_stats = {}
+            
+            for metadata in results["metadatas"]:
+                filename = metadata.get("source", "unknown")
+                file_type = metadata.get("file_type", "unknown")
+                
+                # Count by file
+                if filename not in file_stats:
+                    file_stats[filename] = 0
+                file_stats[filename] += 1
+                
+                # Count by type
+                if file_type not in type_stats:
+                    type_stats[file_type] = 0
+                type_stats[file_type] += 1
+            
+            return {
+                "total_chunks": len(results["metadatas"]),
+                "files": file_stats,
+                "file_types": type_stats
+            }
+            
+        except Exception as e:
+            print(f"Error getting document statistics: {e}")
+            return {"total_chunks": 0, "files": {}, "file_types": {}}

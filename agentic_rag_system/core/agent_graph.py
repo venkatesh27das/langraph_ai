@@ -23,7 +23,7 @@ class AgentState(TypedDict):
     final_response: str
     iteration_count: int
     search_results: List[Dict[str, Any]]
-    query_analysis: Optional[Dict[str, Any]]
+    analysis_results: Optional[Dict[str, Any]]
 
 class AgentGraph:
     """LangGraph-based agentic workflow for RAG system"""
@@ -34,22 +34,27 @@ class AgentGraph:
         self.vector_store = vector_store
         self.conversation_handler = conversation_handler
         self.graph = self._build_graph()
+        
+        # Clarification thresholds
+        self.MIN_DOCS_FOR_RESPONSE = 1  # Minimum docs needed to avoid clarification
+        self.MIN_SIMILARITY_SCORE = 0.3  # Minimum similarity score (lower distance = higher similarity)
+        self.MIN_QUERY_WORDS = 2  # Minimum words in query without context
     
     def _build_graph(self) -> CompiledStateGraph:
         """Build the LangGraph workflow"""
         workflow = StateGraph(AgentState)
         
         # Add nodes
-        workflow.add_node("query_analysis", self._analyze_query)
+        workflow.add_node("analyze_query", self._analyze_query)
         workflow.add_node("document_retrieval", self._retrieve_documents)
         workflow.add_node("clarification_check", self._check_clarification_needed)
         workflow.add_node("generate_clarification", self._generate_clarification)
         workflow.add_node("generate_response", self._generate_response)
         
         # Add edges
-        workflow.set_entry_point("query_analysis")
+        workflow.set_entry_point("analyze_query")
         
-        workflow.add_edge("query_analysis", "document_retrieval")
+        workflow.add_edge("analyze_query", "document_retrieval")
         workflow.add_edge("document_retrieval", "clarification_check")
         
         # Conditional edges
@@ -155,7 +160,7 @@ class AgentGraph:
             # Filter results by similarity threshold
             filtered_results = [
                 result for result in search_results 
-                if result.get("distance", 1.0) < (1.0 - Config.SIMILARITY_THRESHOLD)
+                if result.get("distance", 1.0) >= (Config.SIMILARITY_THRESHOLD)
             ]
             
         except Exception as e:
@@ -169,7 +174,7 @@ class AgentGraph:
         }
     
     def _check_clarification_needed(self, state: AgentState) -> Dict[str, Any]:
-        """Check if clarification is needed based on query and results"""
+        """IMPROVED: Check if clarification is needed with stricter conditions"""
         query = state["user_query"]
         retrieved_docs = state["retrieved_documents"]
         context = state.get("conversation_context", "")
@@ -177,31 +182,36 @@ class AgentGraph:
         
         needs_clarification = False
         
-        # Check various conditions for clarification
+        # CONDITION 1: No documents found at all
         if len(retrieved_docs) == 0:
             needs_clarification = True
-        elif query_analysis.get("clarity") == "VAGUE":
-            needs_clarification = True
-        elif len(query.split()) < 3 and not context:
-            needs_clarification = True
+            print("🔍 Clarification needed: No relevant documents found")
         
-        # Use structured prompt for clarification decision
-        if not needs_clarification and retrieved_docs:
-            clarification_prompt = SystemPrompts.get_clarification_decision_prompt(
-                query, context, retrieved_docs
-            )
-            
-            try:
-                response = self.llm_client.chat_completion([
-                    {"role": "system", "content": SystemPrompts.BASE_SYSTEM_PROMPT},
-                    {"role": "user", "content": clarification_prompt}
-                ])
-                
-                needs_clarification = "YES" in response.upper()
-                
-            except Exception as e:
-                print(f"Error in clarification check: {e}")
-                needs_clarification = False
+        # CONDITION 2: Very short query with no context (but be more lenient)
+        elif len(query.split()) <= self.MIN_QUERY_WORDS and not context:
+            # Only clarify for single-word queries or very ambiguous ones
+            ambiguous_single_words = ["help", "info", "what", "how", "explain", "tell", "show"]
+            if len(query.split()) == 1 and query.lower() in ambiguous_single_words:
+                needs_clarification = True
+                print("🔍 Clarification needed: Query too vague")
+        
+        # CONDITION 3: Poor quality results (all documents have low similarity)
+        elif retrieved_docs:
+            # Check if all retrieved documents have poor similarity scores
+            poor_results = all(doc.get("distance", 0) < Config.SIMILARITY_THRESHOLD for doc in retrieved_docs)
+            if poor_results:
+                needs_clarification = True
+                print("🔍 Clarification needed: Poor quality search results")
+        
+        # CONDITION 4: Only ask LLM for clarification decision in edge cases
+        # Remove the automatic LLM call that was causing unnecessary clarifications
+        
+        # CONDITION 5: Special case - if user explicitly asks for clarification
+        clarification_requests = ["can you clarify", "what do you mean", "i don't understand", 
+                                "be more specific", "explain better"]
+        if any(phrase in query.lower() for phrase in clarification_requests):
+            needs_clarification = True
+            print("🔍 Clarification needed: User requested clarification")
         
         return {
             **state,
@@ -391,7 +401,7 @@ class AgentGraph:
         Nodes:
         - query_analysis: Analyzes user intent and context using structured prompts
         - document_retrieval: Retrieves relevant documents with enhanced queries
-        - clarification_check: Uses decision prompts to determine clarification needs
+        - clarification_check: Uses stricter conditions to determine clarification needs
         - generate_clarification: Creates clarification using templates and validation
         - generate_response: Generates final RAG response with source citations
         """

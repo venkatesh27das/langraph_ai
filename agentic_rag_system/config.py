@@ -28,6 +28,20 @@ class Config:
     # Document Processing
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
     CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+
+    # Clarification Control Settings
+    ENABLE_CLARIFICATION = True  # Master switch to enable/disable clarifications
+    CLARIFICATION_THRESHOLD = 0.7  # Similarity distance threshold for poor results
+    MIN_QUERY_LENGTH = 2  # Minimum words before clarification
+    MAX_CLARIFICATIONS_PER_SESSION = 3  # Limit clarifications per conversation
+    
+    # Response Quality Settings
+    MIN_RESPONSE_CONFIDENCE = 0.3  # Minimum confidence for direct response
+    REQUIRE_MULTIPLE_SOURCES = False  # Whether to require multiple document sources
+    
+    # Debug Settings
+    DEBUG_CLARIFICATION = True  # Show clarification decision reasons
+    LOG_RETRIEVAL_SCORES = False  # Log document similarity scores
     
     # Paths
     DOCUMENTS_PATH = os.getenv("DOCUMENTS_PATH", "./data/documents")

@@ -84,13 +84,29 @@ class RAGTerminalInterface:
         # Vector store info
         collection_info = self.vector_store.get_collection_info()
         print(f"📚 Document Collection: {collection_info['name']}")
-        print(f"📄 Documents Indexed: {collection_info['document_count']}")
+        print(f"📄 Total Chunks Indexed: {collection_info['document_count']}")
         print(f"💾 Storage Path: {collection_info['path']}")
         
+        # Get detailed document statistics
+        doc_stats = self.vector_store.get_document_statistics()
+        if doc_stats['total_chunks'] > 0:
+            print(f"\n📋 Document Breakdown:")
+            for file_type, count in doc_stats['file_types'].items():
+                print(f"   {file_type}: {count} chunks")
+            
+            print(f"\n📁 Files Indexed:")
+            for filename, chunks in doc_stats['files'].items():
+                print(f"   {filename}: {chunks} chunks")
+        
         # Model info
-        print(f"🤖 Chat Model: {Config.CHAT_MODEL}")
+        print(f"\n🤖 Chat Model: {Config.CHAT_MODEL}")
         print(f"🔍 Embedding Model: {Config.EMBEDDING_MODEL}")
         print(f"🌐 LMStudio URL: {Config.LMSTUDIO_BASE_URL}")
+        
+        # Chunk settings
+        print(f"📏 Chunk Size: {Config.CHUNK_SIZE}")
+        print(f"🔄 Chunk Overlap: {Config.CHUNK_OVERLAP}")
+        print(f"🔍 Top-K Results: {Config.TOP_K_RESULTS}")
         
         print("="*60)
     
@@ -106,12 +122,27 @@ class RAGTerminalInterface:
             print(f"❌ Directory not found: {directory_path}")
             return False
         
+        # Check for PDF files and warn about dependencies
+        pdf_files = [f for f in os.listdir(directory_path) if f.lower().endswith('.pdf')]
+        if pdf_files:
+            try:
+                import PyPDF2
+                import fitz
+                print(f"📄 Found {len(pdf_files)} PDF file(s). PDF processing is available.")
+            except ImportError:
+                print("⚠️  Warning: PDF files found but PDF processing libraries not installed.")
+                print("   Install with: pip install PyPDF2 PyMuPDF")
+                print("   PDF files will be skipped.")
+        
         success = self.vector_store.load_documents_from_directory(directory_path)
         
         if success:
             # Update system info
             collection_info = self.vector_store.get_collection_info()
-            print(f"✅ Documents loaded successfully! Total documents: {collection_info['document_count']}")
+            doc_stats = self.vector_store.get_document_statistics()
+            print(f"\n✅ Documents loaded successfully!")
+            print(f"📊 Total chunks: {collection_info['document_count']}")
+            print(f"📁 Files processed: {len(doc_stats['files'])}")
         else:
             print("❌ Failed to load documents")
         
@@ -163,6 +194,8 @@ class RAGTerminalInterface:
         print("  /history  - Show conversation history")
         print("  /clear    - Clear conversation history")
         print("  /load     - Load documents from directory")
+        print("  /stats    - Show detailed document statistics")
+        print("  /reset    - Clear vector database")
         print("  /quit     - Exit the system")
         print("="*60)
         
@@ -189,6 +222,10 @@ class RAGTerminalInterface:
                         self._clear_conversation()
                     elif user_input == '/load':
                         self._interactive_load_documents()
+                    elif user_input == '/stats':
+                        self._show_detailed_stats()
+                    elif user_input == '/reset':
+                        self._reset_vector_database()
                     else:
                         print("❌ Unknown command. Type /help for available commands.")
                     continue
@@ -215,6 +252,8 @@ Available Commands:
   /history  - Show recent conversation history
   /clear    - Clear conversation history and start fresh
   /load     - Load documents from a directory
+  /stats    - Show detailed document statistics
+  /reset    - Clear vector database (WARNING: Deletes all indexed documents)
   /quit     - Exit the system
 
 Usage Tips:
@@ -230,12 +269,14 @@ Supported Document Types:
 • JavaScript files (.js)
 • JSON files (.json)
 • CSV files (.csv)
+• PDF files (.pdf) - requires PyPDF2 and PyMuPDF
 
 Example Questions:
 • "What is the main topic of the documentation?"
 • "How do I configure the system?"
 • "Can you explain the architecture?"
 • "What are the key features mentioned?"
+• "Summarize the content of the PDF files"
         """
         print(help_text)
     
@@ -271,6 +312,38 @@ Example Questions:
             path = default_path
         
         self.load_documents(path)
+    
+    def _show_detailed_stats(self):
+        """Show detailed document statistics"""
+        doc_stats = self.vector_store.get_document_statistics()
+        
+        print("\n📊 DETAILED DOCUMENT STATISTICS")
+        print("="*50)
+        print(f"Total Chunks: {doc_stats['total_chunks']}")
+        
+        if doc_stats['file_types']:
+            print("\nBy File Type:")
+            for file_type, count in sorted(doc_stats['file_types'].items()):
+                percentage = (count / doc_stats['total_chunks']) * 100
+                print(f"  {file_type}: {count} chunks ({percentage:.1f}%)")
+        
+        if doc_stats['files']:
+            print(f"\nBy File ({len(doc_stats['files'])} files):")
+            for filename, chunks in sorted(doc_stats['files'].items()):
+                print(f"  {filename}: {chunks} chunks")
+        
+        print("="*50)
+    
+    def _reset_vector_database(self):
+        """Reset the vector database"""
+        confirm = input("⚠️  WARNING: This will delete ALL indexed documents. Type 'yes' to confirm: ")
+        if confirm.lower() == 'yes':
+            if self.vector_store.clear_collection():
+                print("🗑️  Vector database cleared successfully!")
+            else:
+                print("❌ Failed to clear vector database")
+        else:
+            print("Operation cancelled.")
 
 def main():
     """Main entry point"""
